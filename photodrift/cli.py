@@ -63,6 +63,16 @@ def build_parser():
     g.add_argument("--card-time", type=float,
                    help="automatic duration: seconds each card is visible (default 8)")
 
+    g = p.add_argument_group("strip (speed follows the clip length in Kdenlive)")
+    g.add_argument("--strip", dest="strip", action="store_true", default=None,
+                   help="write photodrift-strip.png and the Transform preset (default)")
+    g.add_argument("--no-strip", dest="strip", action="store_false", help="only write the title clip")
+    g.add_argument("--kdenlive-preset", dest="kdenlive_preset", action="store_true", default=None,
+                   help="add the preset to Kdenlive's Transform presets (default)")
+    g.add_argument("--no-kdenlive-preset", dest="kdenlive_preset", action="store_false",
+                   help="do not touch Kdenlive's preset file")
+    g.add_argument("--kdenlive-dir", help="Kdenlive data folder (default ~/.local/share/kdenlive)")
+
     g = p.add_argument_group("layout")
     g.add_argument("--card-width", type=float, help="card width as a fraction of frame width (default 0.30)")
     g.add_argument("--layout", choices=LAYOUTS, help="alternate (default), center or random")
@@ -102,6 +112,12 @@ def merge_settings(args, stored):
             raise project.PhotoDriftError("bad --size %r (use e.g. 1920x1080)" % args.size)
     if args.fps:
         s.fps = args.fps
+    if args.strip is not None:
+        s.strip = args.strip
+    if args.kdenlive_preset is not None:
+        s.kdenlive_preset = args.kdenlive_preset
+    if args.kdenlive_dir:
+        s.kdenlive_dir = os.path.abspath(os.path.expanduser(args.kdenlive_dir))
     for name in ("card_width", "layout", "spacing", "side_offset", "jitter_x", "jitter_y", "tilt",
                  "seed", "style", "supersample", "card_time"):
         v = getattr(args, name)
@@ -165,6 +181,21 @@ def main(argv=None):
               "or fewer photos.")
     if s["backup"]:
         print("Previous title saved as %s" % s["backup"])
+    st = s["strip"]
+    if st:
+        print("")
+        print("Strip: %s (%dx%d)" % (st["path"], st["size"][0], st["size"][1]))
+        if st["preset_file"]:
+            print("Transform preset \"%s\" written to %s" % (st["preset_name"], st["preset_file"]))
+        print("Transform rect: %s" % st["rect"])
+        if st["rect_changed"]:
+            print("The strip changed size or travel: choose the preset again on the strip clip in Kdenlive.")
+        if st["too_big"]:
+            print("WARNING: the strip is too tall for Qt to load (over 256 MB as an image). "
+                  "Use fewer photos, a smaller --card-width or --spacing.")
+        if st["other_items"]:
+            print("Note: %d item(s) added in the title editor (text etc.) are only in the title clip, "
+                  "not in the strip." % st["other_items"])
     return 0
 
 

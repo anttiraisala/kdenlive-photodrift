@@ -27,6 +27,7 @@ from dataclasses import dataclass, field, asdict, fields
 from . import cards as cardmod
 from . import layout as layoutmod
 from . import ordering
+from . import strip as stripmod
 from . import title as titlemod
 
 STATE_VERSION = 1
@@ -57,6 +58,9 @@ class Settings:
     recursive: bool = False
     duration: float = None        # seconds; None = automatic from card_time
     card_time: float = 8.0        # automatic duration: seconds each card is visible
+    strip: bool = True            # also write photodrift-strip.png (speed follows clip length)
+    kdenlive_preset: bool = True  # write the Transform preset into Kdenlive's preset file
+    kdenlive_dir: str = ""        # Kdenlive data folder; "" = ~/.local/share/kdenlive
 
     @classmethod
     def from_dict(cls, data):
@@ -300,6 +304,27 @@ def run(settings, out_dir, reset_order=False, reset_positions=False, duration_gi
         f.write(text)
     os.replace(tmp, title_path)
 
+    # ---- strip and Transform preset ---------------------------------------
+    strip_info = None
+    if settings.strip:
+        strip_path = os.path.join(out_dir, stripmod.STRIP_NAME)
+        strip_top, strip_h = stripmod.render_strip(placements, W, strip_path)
+        rect = stripmod.transform_rect(W, H, strip_top, strip_h, math.ceil(travel))
+        params = stripmod.preset_params(rect)
+        preset_name = "PhotoDrift " + os.path.basename(out_dir)
+        save_json(os.path.join(out_dir, stripmod.PRESET_COPY_NAME), [{preset_name: params}])
+        preset_file = None
+        if settings.kdenlive_preset:
+            preset_file = stripmod.write_kdenlive_preset(
+                settings.kdenlive_dir or stripmod.default_kdenlive_dir(), preset_name, params)
+        strip_info = {
+            "path": strip_path, "size": (W, strip_h), "rect": rect, "preset_name": preset_name,
+            "preset_file": preset_file,
+            "rect_changed": bool(old_state.get("strip_rect")) and rect != old_state.get("strip_rect"),
+            "too_big": W * strip_h * 4 > stripmod.QT_IMAGE_LIMIT_BYTES,
+            "other_items": len(other_items),
+        }
+
     # Remove card images of photos that are no longer used.
     removed = 0
     keep = {e["file"] for e in new_cards.values()}
@@ -315,6 +340,7 @@ def run(settings, out_dir, reset_order=False, reset_positions=False, duration_gi
         "version": STATE_VERSION,
         "settings": settings.to_dict(),
         "written_duration": frames,
+        "strip_rect": strip_info["rect"] if strip_info else None,
         "cards": new_cards,
     }
     save_json(os.path.join(out_dir, STATE_NAME), state)
@@ -327,6 +353,7 @@ def run(settings, out_dir, reset_order=False, reset_positions=False, duration_gi
         "dropped": dropped, "rendered": rendered, "removed": removed, "kept_manual": kept_manual,
         "frames": frames, "seconds": seconds, "duration_source": duration_source,
         "travel_px": travel, "px_per_frame": speed, "card_visible_s": visible, "backup": backup,
+        "strip": strip_info,
     }
     return summary
 

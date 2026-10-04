@@ -11,6 +11,9 @@ sys.path.insert(0, os.path.join(ROOT, "tools"))
 
 import make_test_photos  # noqa: E402
 
+# Never write into the real Kdenlive preset folder from tests.
+os.environ["XDG_DATA_HOME"] = tempfile.mkdtemp(prefix="pd-xdg-")
+
 _PHOTO_CACHE = {}
 
 

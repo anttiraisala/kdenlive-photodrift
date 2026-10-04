@@ -5,6 +5,7 @@ module needs one; use xvfb-run on a server).
 """
 
 import io
+import json
 import os
 import shutil
 import subprocess
@@ -60,6 +61,45 @@ class MeltRenderTests(unittest.TestCase):
                 errors[shift] = float(np.abs(d).mean())
             best = min(errors, key=errors.get)
             self.assertGreater(best, 0, "cards should move up")
+        finally:
+            shutil.rmtree(out, ignore_errors=True)
+            shutil.rmtree(photos, ignore_errors=True)
+
+    def test_strip_speed_follows_clip_length(self):
+        photos = copy_photos(small_photos(), names={"IMG_0001.jpg", "IMG_0002.jpg", "IMG_0003.jpg"})
+        out = tempfile.mkdtemp(prefix="pd-melt-")
+        try:
+            with redirect_stdout(io.StringIO()):
+                rc = cli.main(["--photos", photos, "--out", out, "--size", "640x360", "--duration", "4"])
+            self.assertEqual(rc, 0)
+            with open(os.path.join(out, "photodrift-transform-preset.json")) as f:
+                rect = next(p["value"] for p in next(iter(json.load(f)[0].values())) if p["name"] == "rect")
+            strip_png = os.path.join(out, "photodrift-strip.png")
+            title_path = os.path.join(out, project.TITLE_NAME)
+
+            def render(frames, source, rect_or_none, tag):
+                mlt = os.path.join(out, tag + ".mlt")
+                with open(mlt, "w") as f:
+                    f.write(melt_preview.build_mlt(source, frames, 320, 180, 25, "#000000", rect_or_none))
+                pattern = os.path.join(out, tag + "-%03d.png")
+                subprocess.run(["melt", "-silent", mlt, "-consumer", "avformat:" + pattern, "vcodec=png"],
+                               capture_output=True, text=True, timeout=300)
+                return lambda n: np.asarray(Image.open(pattern % (n + 1)).convert("L"), np.float32)
+
+            # Keyframes are on the first and the last frame: frame n of an N-frame clip is at n / (N - 1).
+            short = render(50, strip_png, rect, "s50")    # frame 20 -> 20/49
+            long_ = render(99, strip_png, rect, "s99")    # frame 40 -> 40/98, the same point
+            # Same relative time -> same picture: the speed follows the clip length.
+            self.assertLess(np.abs(short(20) - long_(40)).mean(), 2.0)
+            self.assertGreater(long_(40).max(), 150)
+            # The strip shows the same thing as the title clip. The title animates over
+            # "duration" frames (frame n at n / 100), the 101-frame strip clip at n / 100 too.
+            ttl = render(100, title_path, None, "t100")
+            same = render(101, strip_png, rect, "s101")
+            self.assertLess(np.abs(same(40) - ttl(40)).mean(), 2.0)
+            # Start and end are empty.
+            self.assertLess(short(0).max(), 10)
+            self.assertLess(short(49).max(), 10)
         finally:
             shutil.rmtree(out, ignore_errors=True)
             shutil.rmtree(photos, ignore_errors=True)
